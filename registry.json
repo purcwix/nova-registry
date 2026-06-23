@@ -1,3 +1,9 @@
 {
-  "packages": {}
+  "packages": {
+    "nv-semver": {
+      "repo": "purcwix/nv-semver",
+      "description": "Example novac package;",
+      "latest": "1.0.0"
+    }
+  }
 }
