@@ -1,3 +1,9 @@
 {
-  "packages": {}
+  "packages": {
+    "example-pkg": {
+      "repo": "purcwix/example-pkg",
+      "description": "Example novac package;",
+      "latest": "1.0.0"
+    }
+  }
 }
