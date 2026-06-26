@@ -1,7 +1,7 @@
 {
-  "name": "example-pkg",
-  "repo": "purcwix/example-pkg",
-  "description": "Example novac package;",
-  "latest": "1.0.1",
-  "author": "purcwix"
+    "author":  "purcwix",
+    "description":  "Example Nova package",
+    "name":  "example-pkg",
+    "repo":  "purcwix/example-pkg",
+    "latest":  "1.0.1"
 }
