@@ -23,12 +23,12 @@ jobs:
         run: |
           FILES=$(git diff --name-only origin/main HEAD -- 'packages/*.json')
           echo "files=$FILES" >> $GITHUB_OUTPUT
-          COUNT=$(echo "$FILES" | grep -c '.json' || true)
+          COUNT=$(echo "$FILES" | python3 -c "import sys; lines=[l.strip() for l in sys.stdin if l.strip()]; print(len(lines))")
           echo "count=$COUNT" >> $GITHUB_OUTPUT
 
       - name: Reject PRs touching more than one package
         run: |
-          COUNT=${{ steps.changed.outputs.count }}
+          COUNT="${{ steps.changed.outputs.count }}"
           if [ "$COUNT" -gt 1 ]; then
             echo "::error::A single PR may only add or update one package. This PR touches $COUNT package files."
             exit 1
@@ -43,131 +43,136 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -e
-          FILE=${{ steps.changed.outputs.files }}
+          FILE="${{ steps.changed.outputs.files }}"
+          python3 -c "
+          import json, sys, re, os
 
-          python3 - "$FILE" "$PR_AUTHOR" <<'PYEOF'
-          import json, sys, re
-
-          filepath  = sys.argv[1]
-          pr_author = sys.argv[2]
+          filepath  = '$FILE'
+          pr_author = os.environ['PR_AUTHOR']
 
           with open(filepath) as fh:
               try:
                   pkg = json.load(fh)
               except json.JSONDecodeError as e:
-                  print(f"::error::Invalid JSON in {filepath}: {e}")
+                  print(f'::error::Invalid JSON in {filepath}: {e}')
                   sys.exit(1)
 
           errors = []
 
-          REQUIRED = ["name", "repo", "description", "latest", "author"]
+          REQUIRED = ['name', 'repo', 'description', 'latest', 'author']
           for field in REQUIRED:
               if not pkg.get(field):
-                  errors.append(f"Missing or empty required field: '{field}'")
+                  errors.append(f\"Missing or empty required field: '{field}'\")
 
           if errors:
-              for e in errors: print(f"::error::{e}")
+              for e in errors: print(f'::error::{e}')
               sys.exit(1)
 
-          name    = pkg["name"]
-          repo    = pkg["repo"]
-          version = pkg["latest"]
-          author  = pkg["author"]
+          name    = pkg['name']
+          repo    = pkg['repo']
+          version = pkg['latest']
+          author  = pkg['author']
 
-          expected_filename = f"packages/{name}.json"
+          expected_filename = f'packages/{name}.json'
           if filepath != expected_filename:
-              errors.append(
-                  f"File path '{filepath}' does not match package name '{name}'. "
-                  f"Expected: '{expected_filename}'"
-              )
+              errors.append(f\"File path '{filepath}' does not match package name '{name}'. Expected: '{expected_filename}'\")
 
           if not re.fullmatch(r'[a-z][a-z0-9\-]*[a-z0-9]', name) and not re.fullmatch(r'[a-z]', name):
-              errors.append(
-                  f"Invalid package name '{name}'. "
-                  "Must be lowercase letters, digits, and hyphens. "
-                  "Cannot start or end with a hyphen."
-              )
+              errors.append(f\"Invalid package name '{name}'. Must be lowercase, digits, hyphens. Cannot start/end with hyphen.\")
 
           if not re.fullmatch(r'\d+\.\d+\.\d+([.\-][a-zA-Z0-9.\-]+)?', version):
-              errors.append(
-                  f"Invalid version '{version}'. Must be semver: MAJOR.MINOR.PATCH"
-              )
+              errors.append(f\"Invalid version '{version}'. Must be semver: MAJOR.MINOR.PATCH\")
 
           if not re.fullmatch(r'[a-zA-Z0-9_.\-]+/[a-zA-Z0-9_.\-]+', repo):
-              errors.append(f"Invalid repo '{repo}'. Must be 'owner/repo' format.")
+              errors.append(f\"Invalid repo '{repo}'. Must be owner/repo format.\")
 
-          repo_owner = repo.split("/")[0]
+          repo_owner = repo.split('/')[0]
           if repo_owner.lower() != pr_author.lower():
-              errors.append(
-                  f"Repo owner '{repo_owner}' does not match PR author '{pr_author}'. "
-                  "You can only publish under your own GitHub username."
-              )
+              errors.append(f\"Repo owner '{repo_owner}' does not match PR author '{pr_author}'.\")
 
           if author.lower() != pr_author.lower():
-              errors.append(
-                  f"'author' field '{author}' does not match PR author '{pr_author}'."
-              )
+              errors.append(f\"'author' field '{author}' does not match PR author '{pr_author}'.\")
 
-          desc = pkg.get("description", "")
+          desc = pkg.get('description', '')
           if len(desc) < 5:
-              errors.append("'description' is too short (minimum 5 characters).")
+              errors.append(\"'description' is too short (minimum 5 characters).\")
           if len(desc) > 280:
-              errors.append("'description' is too long (maximum 280 characters).")
+              errors.append(\"'description' is too long (maximum 280 characters).\")
 
-          ALLOWED_FIELDS = {"name", "repo", "description", "latest", "author"}
+          ALLOWED_FIELDS = {'name', 'repo', 'description', 'latest', 'author'}
           extra = set(pkg.keys()) - ALLOWED_FIELDS
           if extra:
-              errors.append(
-                  f"Unexpected fields: {sorted(extra)}. "
-                  f"Only allowed: {sorted(ALLOWED_FIELDS)}"
-              )
+              errors.append(f'Unexpected fields: {sorted(extra)}. Only allowed: {sorted(ALLOWED_FIELDS)}')
 
           if errors:
-              for e in errors: print(f"::error::{e}")
+              for e in errors: print(f'::error::{e}')
               sys.exit(1)
 
-          print(f"Validation passed: {name} @ {version} by {author}")
-          PYEOF
+          print(f'Validation passed: {name} @ {version} by {author}')
+          "
 
       - name: Verify repo exists on GitHub
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILE=${{ steps.changed.outputs.files }}
+          FILE="${{ steps.changed.outputs.files }}"
           REPO=$(python3 -c "import json; p=json.load(open('$FILE')); print(p['repo'])")
           echo "Checking github.com/$REPO exists..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO")
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          if [ "$STATUS" = "403" ] || [ "$STATUS" = "429" ]; then
+            echo "::error::GitHub API rate limited (HTTP $STATUS). Failing safe."
+            exit 1
+          fi
           if [ "$STATUS" != "200" ]; then
             echo "::error::Repo 'https://github.com/$REPO' does not exist or is private (HTTP $STATUS)."
             exit 1
           fi
           echo "Repo exists: $REPO"
 
-      - name: Ownership check â€” existing package author cannot change
+      - name: Ownership check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          FILE=${{ steps.changed.outputs.files }}
+          FILE="${{ steps.changed.outputs.files }}"
           PKG_NAME=$(python3 -c "import json; p=json.load(open('$FILE')); print(p['name'])")
 
-          CURRENT=$(curl -s \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/contents/packages/$PKG_NAME.json?ref=main")
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
 
-          IS_NEW=$(echo "$CURRENT" | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); print('yes' if 'message' in d else 'no')" 2>/dev/null || echo "yes")
+          if [ "$STATUS" = "403" ] || [ "$STATUS" = "429" ]; then
+            echo "::error::GitHub API rate limited (HTTP $STATUS). Failing safe."
+            exit 1
+          fi
+
+          IS_NEW=$(echo "$BODY" | python3 -c "
+          import sys, json
+          try:
+              d = json.load(sys.stdin)
+              print('yes' if 'message' in d else 'no')
+          except Exception:
+              print('error')
+          ")
+
+          if [ "$IS_NEW" = "error" ]; then
+            echo "::error::Could not parse GitHub API response. Failing safe."
+            exit 1
+          fi
 
           if [ "$IS_NEW" = "yes" ]; then
-            echo "New package â€” skipping ownership check."
+            echo "New package - skipping ownership check."
             exit 0
           fi
 
-          EXISTING_AUTHOR=$(echo "$CURRENT" | python3 -c "
+          EXISTING_AUTHOR=$(echo "$BODY" | python3 -c "
           import sys, json, base64
           d = json.load(sys.stdin)
           content = base64.b64decode(d['content']).decode()
@@ -188,24 +193,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILE=${{ steps.changed.outputs.files }}
+          FILE="${{ steps.changed.outputs.files }}"
           PKG_NAME=$(python3 -c "import json; p=json.load(open('$FILE')); print(p['name'])")
           NEW_VER=$(python3 -c "import json; p=json.load(open('$FILE')); print(p['latest'])")
 
-          CURRENT=$(curl -s \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/contents/packages/$PKG_NAME.json?ref=main")
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
 
-          IS_NEW=$(echo "$CURRENT" | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); print('yes' if 'message' in d else 'no')" 2>/dev/null || echo "yes")
+          if [ "$STATUS" = "403" ] || [ "$STATUS" = "429" ]; then
+            echo "::error::GitHub API rate limited (HTTP $STATUS). Failing safe."
+            exit 1
+          fi
+
+          IS_NEW=$(echo "$BODY" | python3 -c "
+          import sys, json
+          try:
+              d = json.load(sys.stdin)
+              print('yes' if 'message' in d else 'no')
+          except Exception:
+              print('error')
+          ")
+
+          if [ "$IS_NEW" = "error" ]; then
+            echo "::error::Could not parse GitHub API response. Failing safe."
+            exit 1
+          fi
 
           if [ "$IS_NEW" = "yes" ]; then
-            echo "New package â€” skipping version check."
+            echo "New package - skipping version check."
             exit 0
           fi
 
-          EXISTING_VER=$(echo "$CURRENT" | python3 -c "
+          EXISTING_VER=$(echo "$BODY" | python3 -c "
           import sys, json, base64
           d = json.load(sys.stdin)
           content = base64.b64decode(d['content']).decode()
@@ -213,27 +236,27 @@ jobs:
           print(pkg.get('latest', '0.0.0'))
           ")
 
-          python3 - "$EXISTING_VER" "$NEW_VER" <<'PYEOF'
+          python3 -c "
           import sys
           def parse(v):
-              try: return tuple(int(x) for x in v.split("-")[0].split("."))
+              try: return tuple(int(x) for x in v.split('-')[0].split('.'))
               except: return (0,0,0)
-          old = parse(sys.argv[1])
-          new = parse(sys.argv[2])
+          old = parse('$EXISTING_VER')
+          new = parse('$NEW_VER')
           if new < old:
-              print(f"::error::Version downgrade not allowed. Existing: {sys.argv[1]}, Proposed: {sys.argv[2]}")
+              print(f'::error::Version downgrade not allowed. Existing: $EXISTING_VER, Proposed: $NEW_VER')
               sys.exit(1)
           if new == old:
-              print(f"::error::Version '{sys.argv[2]}' is already published. Bump the version.")
+              print(f'::error::Version \$NEW_VER is already published. Bump the version.')
               sys.exit(1)
-          print(f"Version OK: {sys.argv[1]} -> {sys.argv[2]}")
-          PYEOF
+          print(f'Version OK: $EXISTING_VER -> $NEW_VER')
+          "
 
       - name: Merge
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          FILE=${{ steps.changed.outputs.files }}
+          FILE="${{ steps.changed.outputs.files }}"
           SUBJECT=$(python3 -c "import json; p=json.load(open('$FILE')); print('publish: ' + p['name'] + ' @ ' + p['latest'])")
           gh pr merge ${{ github.event.pull_request.number }} \
             --repo ${{ github.repository }} \
