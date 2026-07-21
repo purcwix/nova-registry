@@ -2,6 +2,6 @@
   "name": "nvo-txt-renderer",
   "repo": "purcwix/nvo-txt-renderer",
   "description": "Simple terminal text renderer for novac",
-  "latest": "1.1.0",
+  "latest": "1.1.1",
   "author": "purcwix"
 }
